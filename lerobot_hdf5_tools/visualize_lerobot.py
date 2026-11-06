@@ -72,17 +72,26 @@ def main() -> None:
                         help="Image size for the stored intrinsics; scale K if video size differs")
     parser.add_argument("--axis_length", type=float, default=0.05, help="Coordinate axis length in metres")
     parser.add_argument("--save_path", type=Path, help="Optional output plot, outside the upload directory")
-    parser.add_argument("--no_show", action="store_true", help="Headless rendering; requires save_path")
+    parser.add_argument("--save_video", type=Path, help="Export the displayed panels to an MP4, starting at frame")
+    parser.add_argument("--end_frame", type=int, help="Exclusive video end frame (default: episode length)")
+    parser.add_argument("--fps", type=float, help="Output video FPS (default: dataset FPS); changes playback speed")
+    parser.add_argument("--no_show", action="store_true", help="Headless rendering; requires save_path or save_video")
     args = parser.parse_args()
     args.show_video = args.show_video or args.project_tcp
     if args.future_frames < 0 or args.future_step < 1 or min(args.calibration_size) < 1:
         parser.error("future_frames must be >= 0; future_step and calibration_size must be positive")
 
-    if args.show_video:
+    if (args.end_frame is not None or args.fps is not None) and args.save_video is None:
+        parser.error("--end_frame and --fps require --save_video")
+    if args.save_video is not None and args.save_path is not None and args.save_video.resolve() == args.save_path.resolve():
+        parser.error("--save_video and --save_path must be different files")
+
+    if args.show_video or args.save_video is not None:
         # Load the optional video backend before Arrow's native libraries.
         import cv2
 
     table, info = load_episode(args.dataset, args.episode_index)
+    video_fps = args.fps if args.fps is not None else info.get("fps", 0)
     params = load_camera_params(args.camera_params)
     arrays = episode_arrays(table)
     arm_poses = episode_poses(arrays, params, args.wrist_extrinsic_source)
@@ -106,7 +115,8 @@ def main() -> None:
     def load_camera_frame(camera: str, index: int) -> tuple[np.ndarray, str]:
         # All views use the same episode row/frame, as in conversion.
         capture = captures[camera]
-        capture.set(cv2.CAP_PROP_POS_FRAMES, index)
+        if int(capture.get(cv2.CAP_PROP_POS_FRAMES)) != index:
+            capture.set(cv2.CAP_PROP_POS_FRAMES, index)
         ok, image = capture.read()
         if not ok:
             raise RuntimeError(f"Cannot decode {camera} video frame {index}")
@@ -127,12 +137,15 @@ def main() -> None:
             for camera in cameras:
                 path = episode_path(args.dataset, info, args.episode_index, "video_path",
                                     f"observation.images.{camera}_image")
+                if args.save_video is not None and args.save_video.resolve() == path:
+                    parser.error("--save_video must not overwrite an input video")
                 captures[camera] = cv2.VideoCapture(str(path))
                 if not captures[camera].isOpened():
                     raise RuntimeError(f"Cannot open {camera} video: {path}")
                 image_loaders[camera] = lambda index, camera=camera: load_camera_frame(camera, index)
         plot_poses(poses, table["timestamp"].to_numpy(), args.frame, args.axis_length,
-                   args.save_path, args.no_show, image_loaders)
+                   args.save_path, args.no_show, image_loaders,
+                   save_video=args.save_video, video_fps=video_fps, end_frame=args.end_frame)
     finally:
         for capture in captures.values():
             capture.release()
