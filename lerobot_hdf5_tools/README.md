@@ -13,7 +13,7 @@ cd yw/lerobot_hdf5_tools
 | 文件 | 用途 |
 | --- | --- |
 | `hw_single_arm_data_to_h5_tcp_joint.py` | 单/双臂 LeRobot → HDF5，支持采样和多进程 |
-| `visualize_lerobot.py` | 直接查看 LeRobot 三维位姿、主/腕视角及 TCP 投影 |
+| `visualize_lerobot.py` | 直接查看 LeRobot 三维位姿、主/腕视角及 TCP 投影，保存图片或 MP4 |
 | `visualize_h5_pose_3d.py` | 查看转换后 HDF5 的单/双臂三维位姿 |
 | `camera_params.json` | 相机内外参和左右 TCP 偏移 |
 | `camera_param_calculate.py` | 从脚本内已有标定常量导出参数 JSON |
@@ -164,7 +164,7 @@ python visualize_lerobot.py \
 所有未来点都投影到**当前帧**的相机坐标系；相机后方点会过滤，画面外线段会裁剪。
 采用针孔相机模型，当前配置不包含畸变参数，图像应与内参匹配。
 
-无窗口保存：
+无窗口保存单帧图片：
 
 ```bash
 python visualize_lerobot.py \
@@ -172,6 +172,36 @@ python visualize_lerobot.py \
   --project_tcp --future_frames 30 \
   --no_show --save_path ./outputs/projection.png
 ```
+
+### 导出可视化视频
+
+将整个 episode 的三维图、主相机与腕相机画面一起保存为 MP4，叠加 TCP 坐标轴和未来轨迹：
+
+```bash
+python visualize_lerobot.py \
+  --dataset ./data/input --episode_index 0 \
+  --project_tcp --future_frames 30 --axis_length 0.03 \
+  --no_show --save_video ./outputs/episode_000.mp4
+```
+
+只导出第 30～89 帧的三维图和主视角，以 15 FPS 播放：
+
+```bash
+python visualize_lerobot.py \
+  --dataset ./data/input --episode_index 0 --frame 30 --end_frame 90 \
+  --project_tcp --camera head --fps 15 \
+  --no_show --save_video ./outputs/head_clip.mp4
+```
+
+- `--save_video`：输出 `.mp4`，保存三维图和所选相机的组合画面，不包含交互滑块与音频。
+- `--frame`：起始帧，默认 0；`--end_frame`：结束帧（不包含），默认 episode 末尾。
+- `--fps`：输出帧率，默认使用 `meta/info.json` 的 `fps`。逐帧导出，不丢帧、不插值；修改此值会改变播放速度。输出为固定帧率，不按不规则时间戳重采样。
+- 相机和投影选项与交互查看一致；仅使用 `--save_video` 时只导出三维图，加入 `--show_video` 显示相机，加入 `--project_tcp` 同时显示投影。
+- 可同时传入 `--save_path` 保存起始帧图片。使用 `--no_show` 可在无窗口环境运行；不加时导出完成后打开交互查看器。
+
+未来轨迹仍取自原 episode，片段末尾可以显示 `end_frame` 之后的未来点。
+导出使用现有 OpenCV 的 `mp4v` 编码支持，无新增依赖；逐帧绘图可能比原视频播放慢。
+成功后替换同名输出文件；请将生成的视频保存在本地输出目录，不提交到代码仓库。
 
 ## 可视化 HDF5
 
