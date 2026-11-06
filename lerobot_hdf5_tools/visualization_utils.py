@@ -2,6 +2,7 @@
 
 from collections.abc import Callable
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 
 import numpy as np
 
@@ -69,6 +70,10 @@ def plot_poses(
     save_path: Path | None = None,
     no_show: bool = False,
     image_loaders: dict[str, Callable] | None = None,
+    *,
+    save_video: Path | None = None,
+    video_fps: float = 30.0,
+    end_frame: int | None = None,
 ) -> None:
     """Plot trajectories and current axes; arrow keys/slider navigate samples."""
     import matplotlib
@@ -84,8 +89,16 @@ def plot_poses(
         raise ValueError(f"frame={frame} outside [0, {count})")
     if axis_length <= 0:
         raise ValueError("axis_length must be positive")
-    if no_show and save_path is None:
-        raise ValueError("--no_show requires --save_path")
+    if no_show and save_path is None and save_video is None:
+        raise ValueError("--no_show requires --save_path or --save_video")
+    end_frame = count if end_frame is None else end_frame
+    if save_video is not None:
+        if save_video.suffix.lower() != ".mp4":
+            raise ValueError("--save_video must end in .mp4")
+        if not np.isfinite(video_fps) or video_fps <= 0:
+            raise ValueError("Video FPS must be positive; use --fps or set metadata fps")
+        if not frame < end_frame <= count:
+            raise ValueError(f"end_frame must be in ({frame}, {count}]")
     for name, sequence in poses.items():
         if sequence.shape != (count, 4, 4) or not np.isfinite(sequence).all():
             raise ValueError(f"Invalid {name} pose shape/values: {sequence.shape}")
@@ -106,7 +119,7 @@ def plot_poses(
     radius = max(float(np.ptp(points, axis=0).max()) / 2 + axis_length, 0.1)
     colors = {"flange": "gray", "tcp": "tab:orange", "wrist_camera": "tab:purple"}
 
-    def draw(index: int) -> None:
+    def draw(index: int, refresh: bool = True) -> None:
         ax.clear()
         for name, sequence in poses.items():
             xyz = sequence[:, :3, 3]
@@ -135,9 +148,47 @@ def plot_poses(
             image_ax.imshow(rgb)
             image_ax.set_title(title)
             image_ax.axis("off")
-        fig.canvas.draw_idle()
+        if refresh:
+            fig.canvas.draw_idle()
 
     draw(frame)
+    if save_path is not None:
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(save_path, dpi=160)
+        print(f"Saved plot: {save_path}")
+    if save_video is not None:
+        import cv2
+
+        save_video.parent.mkdir(parents=True, exist_ok=True)
+        # Publish only a completed video; keep any previous output on failure.
+        with NamedTemporaryFile(dir=save_video.parent, suffix=".mp4", delete=False) as temporary:
+            temporary_path = Path(temporary.name)
+        writer = None
+        try:
+            for index in range(frame, end_frame):
+                draw(index, refresh=False)
+                fig.canvas.draw()
+                rgb = np.asarray(fig.canvas.buffer_rgba())[:, :, :3]
+                height, width = rgb.shape[:2]
+                # MP4 encoders require even image dimensions.
+                bgr = cv2.cvtColor(rgb[:height // 2 * 2, :width // 2 * 2], cv2.COLOR_RGB2BGR)
+                if writer is None:
+                    writer = cv2.VideoWriter(str(temporary_path), cv2.VideoWriter_fourcc(*"mp4v"),
+                                             video_fps, (bgr.shape[1], bgr.shape[0]))
+                    if not writer.isOpened():
+                        raise RuntimeError("Cannot open MP4 writer; check OpenCV FFmpeg/MP4 support")
+                writer.write(bgr)
+                if (index - frame + 1) % 100 == 0:
+                    print(f"Video frames: {index - frame + 1}/{end_frame - frame}", flush=True)
+            writer.release()
+            temporary_path.replace(save_video)
+            print(f"Saved video: {save_video} ({end_frame - frame} frames, {video_fps:g} FPS)")
+        finally:
+            if writer is not None:
+                writer.release()
+            temporary_path.unlink(missing_ok=True)
+        if not no_show:
+            draw(frame)
     if not no_show and count > 1:
         slider_ax = fig.add_axes([0.2, 0.06, 0.6, 0.03])
         slider = Slider(slider_ax, "Frame", 0, count - 1, valinit=frame, valstep=1)
@@ -150,10 +201,6 @@ def plot_poses(
                 slider.set_val(max(int(slider.val) - 1, 0))
 
         fig.canvas.mpl_connect("key_press_event", on_key)
-    if save_path is not None:
-        save_path.parent.mkdir(parents=True, exist_ok=True)
-        fig.savefig(save_path, dpi=160)
-        print(f"Saved plot: {save_path}")
     if not no_show:
         plt.show()
     plt.close(fig)
