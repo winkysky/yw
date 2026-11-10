@@ -1,0 +1,6 @@
+# Install in the Python environment used by ROS2.
+# rclpy, cv_bridge, tf2_ros and the ROS message packages come from ROS2.
+# Keep NumPy compatible with the system cv_bridge build; do not blindly upgrade.
+numpy
+scipy
+Pyro4>=4.82,<5

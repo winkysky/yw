@@ -1,0 +1,85 @@
+{
+  "server": {
+    "ns_host": null,
+    "ns_port": 9090,
+    "uri": "e2vla",
+    "timeout_s": 30.0
+  },
+  "reference_frame": null,
+  "joint_states_topics": ["/joint_states"],
+  "planning_group": null,
+  "move_group_action": "/move_action",
+  "max_sensor_age_s": 0.5,
+  "max_sensor_skew_s": 0.1,
+  "observation_timeout_s": 15.0,
+  "cameras": {
+    "external_cam": {
+      "image_topic": "/external/color/image_rect_color",
+      "camera_info_topic": "/external/color/camera_info",
+      "rectified": true
+    },
+    "left_wrist_cam": {
+      "image_topic": "/left_wrist/color/image_rect_color",
+      "camera_info_topic": "/left_wrist/color/camera_info",
+      "rectified": true
+    },
+    "right_wrist_cam": {
+      "image_topic": "/right_wrist/color/image_rect_color",
+      "camera_info_topic": "/right_wrist/color/camera_info",
+      "rectified": true
+    }
+  },
+  "arms": [
+    {
+      "name": "left",
+      "tcp_frame": null,
+      "joint_names": [],
+      "workspace": {"workspace_min_m": null, "workspace_max_m": null},
+      "gripper": {
+        "mode": "action",
+        "fixed_model_value": null,
+        "model_closed": 0.0,
+        "model_open": 1.0,
+        "joint_name": null,
+        "state_closed": null,
+        "state_open": null,
+        "action_name": null,
+        "command_closed_m": null,
+        "command_open_m": null,
+        "max_effort_n": null,
+        "allow_stall": false
+      }
+    },
+    {
+      "name": "right",
+      "tcp_frame": null,
+      "joint_names": [],
+      "workspace": {"workspace_min_m": null, "workspace_max_m": null},
+      "gripper": {
+        "mode": "action",
+        "fixed_model_value": null,
+        "model_closed": 0.0,
+        "model_open": 1.0,
+        "joint_name": null,
+        "state_closed": null,
+        "state_open": null,
+        "action_name": null,
+        "command_closed_m": null,
+        "command_open_m": null,
+        "max_effort_n": null,
+        "allow_stall": false
+      }
+    }
+  ],
+  "motion": {
+    "max_translation_step_m": 0.03,
+    "max_rotation_step_deg": 15.0,
+    "max_prediction_age_s": 5.0,
+    "velocity_scale": 0.1,
+    "acceleration_scale": 0.1,
+    "position_tolerance_m": 0.002,
+    "orientation_tolerance_rad": 0.03,
+    "planning_time_s": 2.0,
+    "action_timeout_s": 30.0
+  }
+}
