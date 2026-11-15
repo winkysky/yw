@@ -63,7 +63,11 @@ def arm_transform(params: dict, arm: str, name: str) -> np.ndarray:
 
 
 def compute_poses(raw_pose: np.ndarray, params: dict, source: str, arm: str = "left") -> dict:
-    """Return flange, TCP and wrist-camera poses in the recorded base frame."""
+    """Return flange, TCP and wrist-camera poses in the shared robot base.
+
+    Apply robot_T_recorded_base to the full pose before attaching the tool or
+    camera. Missing base transforms default to identity for legacy configs.
+    """
     flange = rpy_to_matrix(raw_pose)
     # Optional recorded arm-base -> shared robot-base transform; translations in m.
     flange = np.asarray(params.get(f"{arm.upper()}_BASE_IN_ROBOTBASE", np.eye(4))) @ flange

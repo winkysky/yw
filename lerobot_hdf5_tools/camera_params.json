@@ -207,5 +207,60 @@
       1
     ]
   ],
-  "RIGHT_T_TCP_CAM": null
+  "RIGHT_T_TCP_CAM": null,
+  "LEFT_BASE_IN_ROBOTBASE": [
+    [
+      1.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      1.0,
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0,
+      1.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ]
+  ],
+  "RIGHT_BASE_IN_ROBOTBASE": [
+    [
+      0.9999999754373268,
+      -0.00019314102178815806,
+      0.00010872852182784586,
+      0.00022182998833978316
+    ],
+    [
+      -0.0001931473690101225,
+      -0.9999999796435581,
+      5.836931566893233e-05,
+      -3.012134673285871e-05
+    ],
+    [
+      0.00010871724610525069,
+      -5.8390314863006505e-05,
+      -0.9999999923855655,
+      -0.23003485082559016
+    ],
+    [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ]
+  ],
+  "ROBOT_BASE_REFERENCE": "left_recorded_arm_base",
+  "BASE_ALIGNMENT_STATUS": "estimated_from_urdf_and_recorded_poses; see README.md",
+  "HEAD_CAMINBASEPOSE_REFERENCE": "left_recorded_arm_base; visually_checked_not_recalibrated"
 }

@@ -15,8 +15,9 @@ cd yw/lerobot_hdf5_tools
 | `hw_single_arm_data_to_h5_tcp_joint.py` | 单/双臂 LeRobot → HDF5，支持采样和多进程 |
 | `visualize_lerobot.py` | 直接查看 LeRobot 三维位姿、主/腕视角及 TCP 投影，保存图片或 MP4 |
 | `visualize_h5_pose_3d.py` | 查看转换后 HDF5 的单/双臂三维位姿 |
-| `camera_params.json` | 相机内外参和左右 TCP 偏移 |
+| `camera_params.json` | 相机内外参、左右 TCP 偏移及 HW 左右基座变换 |
 | `camera_param_calculate.py` | 从脚本内已有标定常量导出参数 JSON |
+| `estimate_hw_base_transform.py` | 从 URDF、关节角和记录法兰位姿联合估计左右基座关系 |
 | `pose_utils.py` | 输入字段拆分、单位转换、左右臂位姿计算，由入口脚本调用 |
 | `visualization_utils.py` | 图像投影、未来轨迹绘制、同步多视角绘图，由入口脚本调用 |
 | `environment.yml` | Conda 环境依赖 |
@@ -62,7 +63,7 @@ conda activate data_yw
 | `LEFT_T_FLANGE_TCP`、`RIGHT_T_FLANGE_TCP` | 各 TCP 在各自法兰中的 4×4 位姿，平移 mm |
 | `LEFT_CAMINTOOLPOSE`、`RIGHT_CAMINTOOLPOSE` | 各腕相机在法兰中的 4×4 位姿，平移 m |
 | `LEFT_CAMERA_K`、`RIGHT_CAMERA_K`、`HEAD_CAMERA_K` | 3×3 相机内参，像素 |
-| `HEAD_CAMINBASEPOSE` | 默认主相机外参，4×4，平移 m |
+| `HEAD_CAMINBASEPOSE` | 默认主相机在共同基坐标中的外参；当前按左臂记录 base 使用，4×4，平移 m |
 | `HEAD_CAMINROBOTBASE`（可选） | 主相机在当前机器人共同基坐标中的位姿，优先于默认主相机外参，平移 m |
 | `LEFT_BASE_IN_ROBOTBASE`、`RIGHT_BASE_IN_ROBOTBASE`（可选） | 各臂记录基坐标到共同机器人基坐标的变换，平移 m |
 | `LEFT_T_TCP_CAM`、`RIGHT_T_TCP_CAM` | 实验相机在 TCP 中的位姿，平移暂按 mm 解释 |
@@ -74,12 +75,38 @@ conda activate data_yw
 默认计算：
 
 ```text
+robot_T_flange = robot_T_recorded_base @ recorded_base_T_flange
 robot_T_tcp = robot_T_flange @ flange_T_tcp
 robot_T_wrist_camera = robot_T_flange @ flange_T_camera
 ```
 
-两臂必须使用同一个机器人基坐标。若分别记录在各自的臂基坐标中，填入上述两组可选基坐标变换；
-否则脚本认为原始位姿已在同一个基坐标中。主相机外参也必须与该坐标系匹配。
+输出的两臂位姿必须使用同一个机器人基坐标。当前随附配置以左臂记录 base 为共同参考，
+`LEFT_BASE_IN_ROBOTBASE = I`，`RIGHT_BASE_IN_ROBOTBASE` 使用下文的 HW robot2 估计结果。
+转换器和 LeRobot 可视化都会自动使用它，同时旋转和平移右臂的法兰、TCP 和腕相机。
+如果输入已经统一到同一个 base，必须另用两组 base 变换均为单位矩阵的配置，避免重复变换。
+其他机器人或安装方式应提供各自的 `--camera_params`；这组估计不是所有双臂机器人的通用参数。
+旧配置缺少 base key 时仍按单位矩阵处理。主相机外参也必须与共同坐标系匹配。
+
+### 当前 HW 左右 base 的关系
+
+配置保存了完整精度的 `left_base_T_right_base`，近似为：
+
+```text
+p_left = R @ p_right + t
+R ≈ diag(1, -1, -1) = Rx(180°)
+t ≈ [0.000221830, -0.000030121, -0.230034851] m
+```
+
+即先旋转，再加上以左 base 表示的平移；姿态也左乘同一个 R。
+这里左 base 的 +Y 向上，右 base 的 +Y 近似朝下。
+URDF 两侧第一关节安装原点相距约 347 mm，但它们不等于数据记录 base；
+拟合得到的记录 base 间距约 230 mm，不能直接将安装间距当成该平移。
+
+该关系通过 `robot2_mk.urdf` 的 FK 与记录位姿联合拟合得到：10 条 episode、每条 25 帧用于拟合，
+另 30 条 episode、每条 25 帧用于验证。验证集左/右臂位置 RMS 为 1.67/0.66 mm，
+旋转 RMS 为 0.166/0.084°。这衡量的是 URDF 与记录位姿的一致性，不是相机或工具标定的独立精度。
+`BASE_ALIGNMENT_STATUS` 明确标记为估计值。头相机沿用原参数并按左 base 使用，经过图像检查但未重新标定；
+右手工具 TCP 仍是上文所述的暂定左手副本，base 拟合不能确定真实工具坐标轴。
 
 默认 `--wrist_extrinsic_source flange_calibration`。实验选项 `tcp_calibration` 改为
 `robot_T_tcp @ tcp_T_camera`，需要提供每只手的 `T_TCP_CAM`；当前右臂该参数为 `null`，不能直接用于实验链。
@@ -91,7 +118,8 @@ robot_T_wrist_camera = robot_T_flange @ flange_T_camera
 python camera_param_calculate.py --save_path ./outputs/camera_params.json
 ```
 
-这只导出已有常量，不执行新的手眼标定；生成器会将右 TCP 重置为左臂的临时副本。
+这只导出已有常量，包含上述左右 base 关系，不执行新的拟合或手眼标定；
+生成器会将右 TCP 重置为左臂的临时副本。
 修改后的正式标定建议另存 JSON，并通过 `--camera_params` 使用。
 
 ## 转换为 HDF5
@@ -150,17 +178,30 @@ python visualize_lerobot.py \
 | 参数 | 用法 |
 | --- | --- |
 | `--project_tcp` | 投影当前 TCP 坐标轴和未来轨迹，同时显示视频 |
+| `--label_tcp_axes` | 与 `--project_tcp` 合用，标出 L/R X/Y/Z 轴端点，便于跨视角核对 |
 | `--camera all` | 默认显示主相机及所有可用腕相机 |
 | `--camera head` | 只显示主视角 |
 | `--camera head left_wrist` | 指定多个视角；还支持 `right_wrist`，`wrist` 是左腕别名 |
 | `--future_frames 30` | 后续最多 30 个原始帧；0 表示只画当前 TCP |
 | `--future_step 2` | 未来轨迹每隔 2 帧取一点 |
 | `--axis_length 0.03` | 坐标轴长度，m |
+| `--base_axis_length 0.15` | 三维图中左右基座的 XYZ 箭头长度，m，默认 0.15 |
+| `--vertical_axis y` | 三维图默认以 +Y 为竖直向上；可选 x/y/z，仅改变观察视角 |
 | `--calibration_size 640 480` | 内参对应的图像尺寸；视频尺寸变化时按比例缩放 K |
 | `--show_video` | 只显示视频，不加投影；不加视频相关选项时只显示三维图 |
 
 用滑块、左右方向键或 A/D 同步切换各视角帧号。X/Y/Z 轴为红/绿/蓝；左、右未来轨迹分别为黄、青色。
+三维图中的左右 TCP 轨迹分别为金黄实线、青色虚线。
 三维图展示整个 episode，图像曲线只展示选定的未来区间，使用真实后续数据而非模型预测。
+三维图默认标出左臂基座 `left_base` 的原点和 XYZ 轴（红/绿/蓝），显示范围包含基座原点及箭头。
+本批 HW 数据的左臂基座 +Y 为物理竖直向上，LeRobot 查看器默认使用 Y 向上的观察视角；
+这不会交换坐标分量或修改外参，绕 Y 轴旋转仍按原坐标定义计算。
+没有设置 `LEFT_BASE_IN_ROBOTBASE` 时，该坐标架位于 `(0, 0, 0)`；设置后按该矩阵显示。
+这只是参考坐标架的显示，不会额外变换轨迹或图像投影。图下方注明右臂基座变换是否已配置；
+未配置时仍使用单位矩阵，不能据此认为左右臂的真实基座重合。
+投影函数要求点和相机位姿已经处于同一个参考坐标系，计算 `camera_T_point = inverse(base_T_camera) @ base_T_point`，
+不会自动推断左右基座的关系。
+若配置了 `RIGHT_BASE_IN_ROBOTBASE`，三维图也会显示该变换定义的 `right_base` 坐标架。
 所有未来点都投影到**当前帧**的相机坐标系；相机后方点会过滤，画面外线段会裁剪。
 采用针孔相机模型，当前配置不包含畸变参数，图像应与内参匹配。
 
@@ -180,7 +221,8 @@ python visualize_lerobot.py \
 ```bash
 python visualize_lerobot.py \
   --dataset ./data/input --episode_index 0 \
-  --project_tcp --future_frames 30 --axis_length 0.03 \
+  --project_tcp --label_tcp_axes --future_frames 60 --axis_length 0.03 \
+  --base_axis_length 0.08 --vertical_axis y \
   --no_show --save_video ./outputs/episode_000.mp4
 ```
 
@@ -217,3 +259,31 @@ python visualize_h5_pose_3d.py \
 H5 查看器显示 TCP 和腕部相机三维位姿；图像投影请使用 `visualize_lerobot.py`。
 LeRobot 查看器的 `--frame` 是原始帧号，H5 查看器的 `--frame` 是采样后的帧号。
 各入口的完整参数可通过 `python <脚本名> --help` 查看。
+
+## 从 URDF 和记录位姿估计左右基座关系
+
+`estimate_hw_base_transform.py` 使用关节角计算 URDF 的 `base_link → l/r_Link6` FK，
+并与记录的法兰位姿共同拟合每只手的两项固定变换：
+
+```text
+world_T_link6(q) @ link6_T_flange = world_T_recorded_base @ recorded_T_flange
+left_base_T_right_base = inverse(world_T_left_base) @ world_T_right_base
+```
+
+同时拟合 `link6_T_flange`，避免将 URDF 第六连杆坐标误当成控制器记录的法兰坐标。
+每只手臂共 12 个未知参数：两组旋转向量和两组平移。最小二乘残差为
+`[5 * translation_error_m, rotation_error_rotvec_rad]`，使用 4 个初值并记录收敛及 Jacobian 条件。
+不使用图像像素，不优化相机外参或 flange 到工具 TCP 的变换。
+假定关节角为度、记录位姿为 mm 和外旋 xyz 欧拉角（度），URDF 长度单位为 m。
+输入清单为 JSON 列表，每条包含 `dataset` 与 `episode_index`。每个采集目录中清单所含的
+最小、最大 episode 用于拟合，其余 episode 留作验证；默认每条均匀取 25 帧。
+
+```bash
+python estimate_hw_base_transform.py \
+  --urdf ./robot2_mk.urdf --manifest ./outputs/all_episodes.json \
+  --camera_params ./camera_params.json --output ./outputs/base_estimate
+```
+
+输出 `base_estimate.json` 记录变换、拟合条件及留出样本误差；`estimated_camera_params.json`
+以左臂记录基座为共同参考系，加入估计的右臂基座变换。头相机及腕相机标定保持输入值。
+结果依赖 URDF 和记录位姿约定，应先通过 `--camera_params` 加载新配置检查少量样本。

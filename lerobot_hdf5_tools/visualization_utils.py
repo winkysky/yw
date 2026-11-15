@@ -8,7 +8,11 @@ import numpy as np
 
 
 def project_points(points: np.ndarray, camera_pose: np.ndarray, intrinsic: np.ndarray) -> np.ndarray:
-    """Project base-frame points; points behind the camera become NaN."""
+    """Project points sharing the camera pose's reference frame.
+
+    camera_pose is reference_T_camera; no left/right base alignment is inferred.
+    Points behind the camera become NaN.
+    """
     camera_from_base = np.linalg.inv(camera_pose)
     camera_points = np.asarray(points) @ camera_from_base[:3, :3].T + camera_from_base[:3, 3]
     pixels = np.full((len(camera_points), 2), np.nan)
@@ -27,6 +31,8 @@ def draw_tcp_projection(
     future_frames: int = 30,
     future_step: int = 1,
     axis_length: float = 0.05,
+    *,
+    label_axes: bool = False,
 ) -> np.ndarray:
     """Overlay each TCP's XYZ axes and future positions in the CURRENT camera."""
     import cv2
@@ -48,8 +54,11 @@ def draw_tcp_projection(
         origin = current[:3, 3]
         axes = np.vstack([origin, origin + axis_length * current[:3, :3].T])
         uv = project_points(axes, camera_pose, intrinsic)
-        for endpoint, color in zip(uv[1:], ((0, 0, 255), (0, 255, 0), (255, 0, 0))):
+        for axis_name, endpoint, color in zip("XYZ", uv[1:], ((0, 0, 255), (0, 255, 0), (255, 0, 0))):
             line(uv[0], endpoint, color)
+            if label_axes and np.isfinite(endpoint).all() and 0 <= endpoint[0] < width and 0 <= endpoint[1] < height:
+                cv2.putText(output, f"{'L' if arm == 0 else 'R'} {axis_name}", pixel(endpoint + [3, -3]),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1, cv2.LINE_AA)
         color = (0, 200, 255) if arm == 0 else (255, 200, 0)
         if np.isfinite(uv[0]).all() and 0 <= uv[0, 0] < width and 0 <= uv[0, 1] < height:
             cv2.circle(output, pixel(uv[0]), 4, color, -1)
@@ -74,6 +83,10 @@ def plot_poses(
     save_video: Path | None = None,
     video_fps: float = 30.0,
     end_frame: int | None = None,
+    reference_frames: dict[str, np.ndarray] | None = None,
+    reference_axis_length: float = 0.15,
+    frame_note: str | None = None,
+    vertical_axis: str = "z",
 ) -> None:
     """Plot trajectories and current axes; arrow keys/slider navigate samples."""
     import matplotlib
@@ -102,6 +115,16 @@ def plot_poses(
     for name, sequence in poses.items():
         if sequence.shape != (count, 4, 4) or not np.isfinite(sequence).all():
             raise ValueError(f"Invalid {name} pose shape/values: {sequence.shape}")
+    reference_frames = reference_frames or {}
+    if not np.isfinite(reference_axis_length) or reference_axis_length <= 0:
+        raise ValueError("reference_axis_length must be finite and positive")
+    reference_points = {}
+    for name, pose in reference_frames.items():
+        pose = np.asarray(pose, dtype=float)
+        if pose.shape != (4, 4) or not np.isfinite(pose).all() or not np.allclose(pose[3], [0, 0, 0, 1]):
+            raise ValueError(f"Invalid reference frame: {name}")
+        origin = pose[:3, 3]
+        reference_points[name] = np.vstack([origin, origin + reference_axis_length * pose[:3, :3].T])
 
     image_loaders = image_loaders or {}
     rows = 2 if len(image_loaders) >= 2 else 1
@@ -109,21 +132,34 @@ def plot_poses(
     fig = plt.figure(figsize=(14, 10) if rows == 2 else ((13, 6) if image_loaders else (8, 7)))
     grid = fig.add_gridspec(rows, columns)
     ax = fig.add_subplot(grid[:, 0] if len(image_loaders) == 2 else grid[0, 0], projection="3d")
+    # Change the viewing orientation only; poses and projections retain their coordinates.
+    ax.view_init(elev=30, azim=-60, vertical_axis=vertical_axis)
     image_axes = {}
     for index, name in enumerate(image_loaders):
         row, column = (index, 1) if len(image_loaders) == 2 else divmod(index + 1, columns)
         image_axes[name] = fig.add_subplot(grid[row, column])
     fig.subplots_adjust(bottom=0.12, top=0.92, hspace=0.30, wspace=0.15)
-    points = np.concatenate([value[:, :3, 3] for value in poses.values()])
+    if frame_note:
+        fig.text(0.5, 0.02, frame_note, ha="center", fontsize=9, color="dimgray")
+    # Include reference origins AND arrow endpoints so the base cannot be cropped out.
+    points = np.concatenate([value[:, :3, 3] for value in poses.values()] + list(reference_points.values()))
     center = (points.max(axis=0) + points.min(axis=0)) / 2
     radius = max(float(np.ptp(points, axis=0).max()) / 2 + axis_length, 0.1)
-    colors = {"flange": "gray", "tcp": "tab:orange", "wrist_camera": "tab:purple"}
+    colors = {"flange": "gray", "tcp": "tab:orange", "wrist_camera": "tab:purple",
+              "left_tcp": "#b58a00", "right_tcp": "#009bb8"}
 
     def draw(index: int, refresh: bool = True) -> None:
         ax.clear()
+        for name, axes in reference_points.items():
+            origin = axes[0]
+            ax.scatter(*origin, color="black", marker="s", s=45, label=name)
+            ax.text(*origin, f"  {name}", fontsize=10, fontweight="bold")
+            for label, end, color in zip(("X", "Y", "Z"), axes[1:], ("r", "g", "b")):
+                ax.quiver(*origin, *(end - origin), color=color, linewidth=2.5, arrow_length_ratio=0.15)
+                ax.text(*end, f"{label} ({name})", color=color, fontsize=9, fontweight="bold")
         for name, sequence in poses.items():
             xyz = sequence[:, :3, 3]
-            color = colors.get(name.removeprefix("left_").removeprefix("right_"))
+            color = colors.get(name, colors.get(name.removeprefix("left_").removeprefix("right_")))
             ax.plot(*xyz.T, color=color, alpha=0.65, label=name,
                     linestyle="--" if name.startswith("right_") else "-")
             pose = sequence[index]
@@ -139,7 +175,7 @@ def plot_poses(
                xlabel="X (m)", ylabel="Y (m)", zlabel="Z (m)")
         ax.set_box_aspect((1, 1, 1))
         ax.set_title(f"Frame {index}/{count - 1}, t={timestamps[index]:.3f}s\n"
-                     "Recorded robot base; axes: X red / Y green / Z blue")
+                     "Shared robot base; axes: X red / Y green / Z blue")
         ax.legend(loc="upper left", fontsize=8)
         for name, loader in image_loaders.items():
             rgb, title = loader(index)
