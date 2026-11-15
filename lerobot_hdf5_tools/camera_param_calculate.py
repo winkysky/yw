@@ -17,7 +17,8 @@ HEAD_CAMERA_K = [[389.3139881, 0, 321.565], [0, 389.560241, 248.887], [0, 0, 1]]
 # HALCON pose type 2 (abg): translation in m, extrinsic XYZ angles in degrees.
 LEFT_CAM_IN_FLANGE_RPY = [-0.0846545, -0.0269479, 0.1148732, 335.147, 0.214637, 295.065]
 RIGHT_CAM_IN_FLANGE_RPY = [0.0867175, 0.0283009, 0.1140642, 335.107, 359.389, 114.261]
-# Preserved from the original converter; relation to the recorded base is unresolved.
+# Preserved from the original converter, used in the left recorded base here.
+# This reference convention was checked visually, not independently recalibrated.
 HEAD_CAMINBASEPOSE = [
     [-0.007527, 0.876441, -0.48145, -0.126936],
     [-0.001166, -0.481471, -0.876461, 0.253658],
@@ -37,6 +38,17 @@ T_TCP_CAM = [
     [-0.999074, 0.040096, 0.015551, 0.007496],
     [-0.002763, -0.420696, 0.907198, -229.935127],
     [0, 0, 0, 1],
+]
+
+# HW robot2 controller bases, estimated jointly with Link6-to-flange offsets.
+# Common robot base = LEFT recorded base (+Y up). Translation is in metres.
+# p_left = R @ p_right + t: rotate first, then add t expressed in left base.
+# Approximately Rx(pi), t = (0, 0, -0.230035); see README for scope/validation.
+RIGHT_BASE_IN_ROBOTBASE = [
+    [0.9999999754373268, -0.00019314102178815806, 0.00010872852182784586, 0.00022182998833978316],
+    [-0.0001931473690101225, -0.9999999796435581, 0.00005836931566893233, -0.00003012134673285871],
+    [0.00010871724610525069, -0.000058390314863006505, -0.9999999923855655, -0.23003485082559016],
+    [0.0, 0.0, 0.0, 1.0],
 ]
 
 
@@ -63,6 +75,11 @@ def build_camera_params() -> dict:
         "RIGHT_T_FLANGE_TCP_STATUS": "provisional_copy_of_left",
         "LEFT_T_TCP_CAM": T_TCP_CAM,
         "RIGHT_T_TCP_CAM": None,
+        "LEFT_BASE_IN_ROBOTBASE": np.eye(4).tolist(),
+        "RIGHT_BASE_IN_ROBOTBASE": [row[:] for row in RIGHT_BASE_IN_ROBOTBASE],
+        "ROBOT_BASE_REFERENCE": "left_recorded_arm_base",
+        "BASE_ALIGNMENT_STATUS": "estimated_from_urdf_and_recorded_poses; see README.md",
+        "HEAD_CAMINBASEPOSE_REFERENCE": "left_recorded_arm_base; visually_checked_not_recalibrated",
     }
 
 

@@ -66,11 +66,17 @@ def main() -> None:
     parser.add_argument("--camera", nargs="+", choices=("all", "wrist", "left_wrist", "right_wrist", "head"),
                         default=["all"], help="Views to show (default: head and available wrists); wrist aliases left_wrist")
     parser.add_argument("--project_tcp", action="store_true", help="Overlay current TCP axes and future trajectory; implies show_video")
+    parser.add_argument("--label_tcp_axes", action="store_true",
+                        help="Label projected axis endpoints L/R X/Y/Z; requires --project_tcp")
     parser.add_argument("--future_frames", type=int, default=30, help="Future original frames to project (0: only current TCP)")
     parser.add_argument("--future_step", type=int, default=1, help="Stride between future trajectory points")
     parser.add_argument("--calibration_size", type=int, nargs=2, default=(640, 480), metavar=("WIDTH", "HEIGHT"),
                         help="Image size for the stored intrinsics; scale K if video size differs")
     parser.add_argument("--axis_length", type=float, default=0.05, help="Coordinate axis length in metres")
+    parser.add_argument("--base_axis_length", type=float, default=0.15,
+                        help="Length in metres of the arm-base XYZ arrows in the 3D plot (default: 0.15)")
+    parser.add_argument("--vertical_axis", choices=("x", "y", "z"), default="y",
+                        help="Up axis of the 3D view; display only, no pose transformation (default: y)")
     parser.add_argument("--save_path", type=Path, help="Optional output plot, outside the upload directory")
     parser.add_argument("--save_video", type=Path, help="Export the displayed panels to an MP4, starting at frame")
     parser.add_argument("--end_frame", type=int, help="Exclusive video end frame (default: episode length)")
@@ -78,6 +84,8 @@ def main() -> None:
     parser.add_argument("--no_show", action="store_true", help="Headless rendering; requires save_path or save_video")
     args = parser.parse_args()
     args.show_video = args.show_video or args.project_tcp
+    if args.label_tcp_axes and not args.project_tcp:
+        parser.error("--label_tcp_axes requires --project_tcp")
     if args.future_frames < 0 or args.future_step < 1 or min(args.calibration_size) < 1:
         parser.error("future_frames must be >= 0; future_step and calibration_size must be positive")
 
@@ -93,10 +101,19 @@ def main() -> None:
     table, info = load_episode(args.dataset, args.episode_index)
     video_fps = args.fps if args.fps is not None else info.get("fps", 0)
     params = load_camera_params(args.camera_params)
+    left_base = np.asarray(params.get("LEFT_BASE_IN_ROBOTBASE", np.eye(4)), dtype=float)
     arrays = episode_arrays(table)
+    reference_frames = {"left_base": left_base}
+    if "right" in arrays["arms"] and "RIGHT_BASE_IN_ROBOTBASE" in params:
+        reference_frames["right_base"] = np.asarray(params["RIGHT_BASE_IN_ROBOTBASE"], dtype=float)
     arm_poses = episode_poses(arrays, params, args.wrist_extrinsic_source)
     poses = {f"{arm}_{name}": sequence for arm, values in arm_poses.items() for name, sequence in values.items()}
     tcp = np.stack([arm_poses[arm]["tcp"] for arm in arrays["arms"]], axis=1)
+    frame_note = f"Reference marker: left_base (recorded left-arm base); view up: +{args.vertical_axis.upper()}."
+    if "right" in arrays["arms"]:
+        frame_note += ("\nRight-base transform: configured." if "RIGHT_BASE_IN_ROBOTBASE" in params
+                       else "\nRight-base transform: identity (not configured).")
+    print(frame_note)
     if "all" in args.camera and len(args.camera) != 1:
         parser.error("Use --camera all alone, or list individual cameras")
     cameras = (["head"] + [f"{arm}_wrist" for arm in arrays["arms"]] if args.camera == ["all"]
@@ -128,7 +145,8 @@ def main() -> None:
             intrinsic[0] *= image.shape[1] / args.calibration_size[0]
             intrinsic[1] *= image.shape[0] / args.calibration_size[1]
             image = draw_tcp_projection(image, tcp, camera_pose, intrinsic,
-                                        index, args.future_frames, args.future_step, args.axis_length)
+                                        index, args.future_frames, args.future_step, args.axis_length,
+                                        label_axes=args.label_tcp_axes)
         title = f"{'head (main)' if camera == 'head' else camera} camera / frame {index}"
         return cv2.cvtColor(image, cv2.COLOR_BGR2RGB), title
 
@@ -145,7 +163,9 @@ def main() -> None:
                 image_loaders[camera] = lambda index, camera=camera: load_camera_frame(camera, index)
         plot_poses(poses, table["timestamp"].to_numpy(), args.frame, args.axis_length,
                    args.save_path, args.no_show, image_loaders,
-                   save_video=args.save_video, video_fps=video_fps, end_frame=args.end_frame)
+                   save_video=args.save_video, video_fps=video_fps, end_frame=args.end_frame,
+                   reference_frames=reference_frames, reference_axis_length=args.base_axis_length,
+                   frame_note=frame_note, vertical_axis=args.vertical_axis)
     finally:
         for capture in captures.values():
             capture.release()
